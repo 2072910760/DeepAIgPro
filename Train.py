@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset
 from torch.utils.data import DataLoader
+import torch.nn.functional as F
 from Bio import SeqIO
 import numpy as np
 import torchmetrics
@@ -39,25 +40,47 @@ codeadict = {'A': "1", 'C': "2", 'D': "3", 'E': "4", 'F': "5", 'G': "6", 'H': "7
              'M': "11", 'N': "12", 'P': "13", 'Q': "14", 'R': "15", 'S': "16", 'T': "17", 'V': "18", 'W': "19", 'Y': "20"}
 
 
-def format(predict_fasta):
+def format(predict_fasta, is_train=True):  # 新增is_train参数，区分训练/测试
     formatfasta = []
     recordlabel = []
     for record in SeqIO.parse(predict_fasta, 'fasta'):
         fastalist = []
-        length = len(record.seq)
+        seq = str(record.seq)
+        length = len(seq)
         if length <= 1000:
-            for i in range(1, 1000-length+1):
-                fastalist.append(0)
-            for a in record.seq:
+            # 训练时添加随机padding（而非固定补0），增强鲁棒性
+            if is_train:
+                pad_length = 1000 - length
+                # 随机在序列前后补0（而非固定在前面）
+                pad_front = np.random.randint(0, pad_length + 1)
+                pad_back = pad_length - pad_front
+                fastalist.extend([0] * pad_front)
+            else:
+                # 测试时保持原有固定padding（确保一致性）
+                fastalist.extend([0] * (1000 - length))
+
+            # 训练时随机替换1%的氨基酸（数据增强）
+            if is_train and np.random.random() < 0.5:  # 50%概率触发
+                seq_list = list(seq)
+                for i in range(int(len(seq) * 0.01)):
+                    pos = np.random.randint(0, len(seq))
+                    # 随机替换为其他氨基酸（非自身）
+                    new_aa = np.random.choice([k for k in codeadict.keys() if k != seq_list[pos]])
+                    seq_list[pos] = new_aa
+                seq = ''.join(seq_list)
+
+            for a in seq:
                 fastalist.append(int(codeadict[a]))
+
+            # 训练时补全剩余padding（若使用随机前补）
+            if is_train:
+                fastalist.extend([0] * pad_back)
+
         formatfasta.append(fastalist)
-        if record.id.startswith('allergen'):
-            recordlabel.append(1)
-        else:
-            recordlabel.append(0)
+        recordlabel.append(1 if record.id.startswith('allergen') else 0)
     inputarray = np.array(formatfasta)
     labelarray = np.array(recordlabel)
-    return(inputarray, labelarray)
+    return (inputarray, labelarray)
 
 
 def validation(model, x_valid, y_valid_label, criterion, args):
@@ -103,33 +126,46 @@ def validation(model, x_valid, y_valid_label, criterion, args):
         f1.reset()
     return (valid_loss, accuracy_value, recall_value, precision_value, auroc_value, f1_value)
 
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=0.25, gamma=2):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha  # 类别权重（可根据数据比例调整）
+        self.gamma = gamma  # 难分样本聚焦参数
+
+    def forward(self, outputs, labels):
+        BCE_loss = F.binary_cross_entropy(outputs, labels.float(), reduction='none')
+        pt = torch.exp(-BCE_loss)  # 预测概率
+        loss = self.alpha * (1 - pt) ** self.gamma * BCE_loss
+        return loss.mean()
 
 def train(args):
-    x = torch.tensor(format(args.inputs)[0], dtype=torch.long)
-    y = torch.tensor(format(args.inputs)[1], dtype=torch.float)
+    x, y = format(args.inputs, is_train=True)  # 修改此处
+    x = torch.tensor(x, dtype=torch.long)
+    y = torch.tensor(y, dtype=torch.float)
     valid_loss_sum, accuracy_sum, recall_sum, precision_sum, auroc_sum, f1_sum = 0, 0, 0, 0, 0, 0
     k = 0
-    skf = KFold(n_splits=10, shuffle=False)
-    k_start=5
+    skf = KFold(n_splits=10, shuffle=True, random_state=42)  # 开启shuffle，使各折数据分布更均匀
     for fold_idx,(train_index, valid_index) in enumerate(skf.split(x)):
-        if fold_idx < k_start:
-            print(f"跳过已完成的第{fold_idx + 1}折...")
-            continue
         x_train, x_valid = x[train_index], x[valid_index]
         y_train_label, y_valid_label = y[train_index], y[valid_index]
-        k = fold_idx+1
-        print(f"\n===== 开始第{k}折训练 =====")
+        k = k+1
         model = convATTnet()
         model.to(device)
-        optimizer = optim.Adam(
-            model.parameters(), lr=args.lr, weight_decay=0.0, betas=(0.9, 0.999))
-        criterion = nn.BCELoss().to(device)
+        optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)  # 新增L2正则化（weight_decay）
+        # 替换criterion为FocalLoss
+        criterion = FocalLoss(alpha=0.4, gamma=2).to(device)  # alpha偏向少数类（根据数据调整）
+
+        # 新增学习率调度器：当验证F1连续3轮不提升，学习率乘以0.5
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='max', factor=0.5, patience=3, verbose=True
+        )
         train_ids = TensorDataset(x_train, y_train_label)
         train_loader = DataLoader(
             dataset=train_ids, batch_size=args.batch_size, shuffle=True, drop_last=True)
-        
+
         model.train()
         best_f1 = 0
+        early_stop_counter = 0  # 早停计数器
         for epoch in range(args.epochs):
             train_loss = 0.0
             for i, data in enumerate(train_loader, 0):
@@ -146,8 +182,23 @@ def train(args):
                 log('[k: %d, batch: %d] train_loss: %.3f' %
                     (k, i + 1, loss.item()), 'train.log')
                 now = time.asctime(time.localtime(time.time()))
+            # 验证并获取指标
             valid_loss, accuracy_value, recall_value, precision_value, auroc_value, f1_value = validation(
                 model, x_valid, y_valid_label, criterion, args)
+
+            # 学习率调度器更新（基于F1）
+            scheduler.step(f1_value)
+
+            # 早停机制：连续5轮F1不提升则停止训练
+            if f1_value > best_f1:
+                best_f1 = f1_value
+                torch.save(model.state_dict(), './model.' + str(k) + '.pt')
+                early_stop_counter = 0  # 重置计数器
+            else:
+                early_stop_counter += 1
+                if early_stop_counter >= 5:
+                    log(f"Early stopping at epoch {epoch} for fold {k}", 'train.log')
+                    break  # 停止当前折的训练
             # Generate validation results for each epoch.
             log('%d\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f' % (epoch, valid_loss, accuracy_value, recall_value,
                 precision_value, auroc_value, f1_value), './model.'+str(k)+'.fold.everyepoch.valid.txt')
