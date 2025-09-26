@@ -1,0 +1,10 @@
+Test1 Result: F1: 0.90638	Accurcay: 0.90704	Precision: 0.91286	Recall: 0.90000	AUROC: 0.96239
+Test2 Result: F1: 0.90064	Accurcay: 0.90211	Precision: 0.91437	Recall: 0.88732	AUROC: 0.95803
+Test3 Result: F1: 0.90286	Accurcay: 0.90423	Precision: 0.91594	Recall: 0.89014	AUROC: 0.96044
+Test4 Result: F1: 0.89045	Accurcay: 0.89014	Precision: 0.88796	Recall: 0.89296	AUROC: 0.95430
+Test5 Result: F1: 0.90377	Accurcay: 0.90282	Precision: 0.89503	Recall: 0.91268	AUROC: 0.95899
+Test6 Result: F1: 0.91255	Accurcay: 0.91268	Precision: 0.91384	Recall: 0.91127	AUROC: 0.96479
+Test7 Result: F1: 0.90237	Accurcay: 0.90141	Precision: 0.89365	Recall: 0.91127	AUROC: 0.96064
+Test8 Result: F1: 0.89900	Accurcay: 0.90000	Precision: 0.90805	Recall: 0.89014	AUROC: 0.95630
+Test9 Result: F1: 0.89636	Accurcay: 0.89366	Precision: 0.87416	Recall: 0.91972	AUROC: 0.95898
+Test10 Result: F1: 0.89507	Accurcay: 0.89648	Precision: 0.90738	Recall: 0.88310	AUROC: 0.96267
