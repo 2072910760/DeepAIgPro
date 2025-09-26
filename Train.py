@@ -86,12 +86,12 @@ def format(predict_fasta, is_train=True):  # 新增is_train参数，区分训练
 def validation(model, x_valid, y_valid_label, criterion, args):
     valid_ids = TensorDataset(x_valid, y_valid_label)
     valid_loader = DataLoader(
-        dataset=valid_ids, batch_size=args.batch_size, shuffle=True, drop_last=True)
+        dataset=valid_ids, batch_size=args.batch_size, shuffle=True, drop_last=False)
     model.eval()
     accuracy = torchmetrics.Accuracy().to(device)
-    recall = torchmetrics.Recall(average='micro').to(device)
+    recall = torchmetrics.Recall().to(device)  # 默认binary
     precision = torchmetrics.Precision().to(device)
-    auroc = torchmetrics.AUROC(num_classes=None, average='micro').to(device)
+    auroc = torchmetrics.AUROC(num_classes=1).to(device)  # 二分类num_classes=1
     f1 = torchmetrics.F1Score().to(device)
 
     finaloutputs = torch.tensor([]).to(device)
@@ -203,11 +203,7 @@ def train(args):
             log('%d\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f' % (epoch, valid_loss, accuracy_value, recall_value,
                 precision_value, auroc_value, f1_value), './model.'+str(k)+'.fold.everyepoch.valid.txt')
             # Save the model with the largest F1 value.
-            if f1_value > best_f1:
-                best_f1 = f1_value
-                torch.save(model.state_dict(), './model.'+str(k)+'.pt')
-                valid_loss, accuracy_value, recall_value, precision_value, auroc_value, f1_value = validation(
-                    model, x_valid, y_valid_label, criterion, args)
+
         # Generate validation results for each fold
         log('[k: %d] valid_loss: %.3f accuracy_value: %.6f recall_value: %.6f precision_value: %.6f auroc_value: %.6f f1_value: %.6f' % (
             k, valid_loss, accuracy_value, recall_value, precision_value, auroc_value, f1_value), 'valid.log')

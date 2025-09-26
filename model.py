@@ -39,43 +39,43 @@ class selfAttention(nn.Module):
 class convATTnet(nn.Module):
     def __init__(self):
         super().__init__()
-        # 卷积层
+        # 卷积层（保持不变）
         self.conv1 = nn.Conv1d(21, 64, 16, stride=1)
         self.bn1 = nn.BatchNorm1d(64)
         self.conv2 = nn.Conv1d(64, 128, 8, stride=1)  # 输出通道=128
         self.bn2 = nn.BatchNorm1d(128)
-        self.maxpool = nn.MaxPool1d(5, stride=5)
+        self.maxpool = nn.MaxPool1d(5, stride=5)  # 池化序列长度
         self.dropout = nn.Dropout(0.2)
 
-        # 自注意力：input_dim=128（与conv2输出匹配）
+        # 自注意力（input_dim=128，保持不变）
         self.attention = selfAttention(
-            num_heads=8,  # 8个头
-            input_dim=128,  # 输入维度=卷积输出通道
-            hidden_dim=32  # 隐藏维度=32（8×4）
+            num_heads=8,
+            input_dim=128,
+            hidden_dim=32
         )
 
-        # 全连接层
-        self.fc1 = nn.Linear(195 * 32, 128)  # 195=序列长度，32=注意力输出维度
+        # 全连接层（序列长度修正为195，保持不变）
+        self.fc1 = nn.Linear(195 * 32, 128)
         self.fc2 = nn.Linear(128, 1)
 
     def forward(self, x):
-        # 输入处理
+        # 输入处理（保持不变）
         x = F.one_hot(x, num_classes=21).float()  # (batch, seq_len, 21)
         x = x.permute(0, 2, 1)  # (batch, 21, seq_len)
 
-        # 卷积特征提取
+        # 卷积特征提取（保持不变）
         x = F.relu(self.bn1(self.conv1(x)))  # (batch, 64, 985)
         x = F.relu(self.bn2(self.conv2(x)))  # (batch, 128, 978)
 
-        # 池化与维度调整
-        x = x.permute(0, 2, 1)  # (batch, 978, 128)
-        x = self.maxpool(x)  # (batch, 195, 128)
+        # 修正：先池化序列长度，再调整维度顺序
+        x = self.maxpool(x)  # 对序列长度（最后一维）池化：(batch, 128, 195)
+        x = x.permute(0, 2, 1)  # 转为 (batch, 195, 128)（序列长度=195，通道=128）
         x = self.dropout(x)
 
-        # 自注意力（输入维度128）
+        # 自注意力（输入维度正确为128）
         x = self.attention(x)  # (batch, 195, 32)
 
-        # 分类头
+        # 分类头（保持不变）
         x = x.flatten(1)  # (batch, 195×32)
         x = F.relu(self.fc1(x))
         x = self.dropout(x)
